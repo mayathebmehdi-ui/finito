@@ -5,7 +5,9 @@ from urllib.parse import urlparse
 from typing import Dict, Optional, List
 import requests
 from bs4 import BeautifulSoup
-from complete_crawler import find_policy_links
+# Optional legacy helper removed by cleanup; provide a no-op fallback
+def find_policy_links(domain: str, limit: int = 10, max_pages: int = 50):
+    return []
 
 class EcommerceScraper:
     def __init__(self):
@@ -53,10 +55,21 @@ class EcommerceScraper:
                 }
                 print(f"✅ Main page scraped: {len(main_content)} chars")
             
-            # STEP 2: Smart URL discovery with help domain check + AI prioritization
-            print(f"  🔄 Finding policy URLs for domain: {domain}")
-            policy_urls = await self._get_prioritized_policy_urls(domain)
-            print(f"🔗 Found {len(policy_urls)} prioritized policy URLs")
+            # STEP 2: Decide path based on Shopify detection
+            try:
+                if await self._is_shopify_site(domain):
+                    print("  🛍️ Shopify site detected, using smart approach...")
+                    scraped_content['is_shopify'] = True
+                    policy_urls = await self._get_shopify_policy_urls(domain)
+                    print(f"🔗 Found {len(policy_urls)} Shopify policy URLs")
+                else:
+                    print("  🔥 Non-Shopify site: skipping internal crawl; Firecrawl will handle discovery")
+                    scraped_content['is_shopify'] = False
+                    return scraped_content
+            except Exception as e:
+                print(f"  ⚠️ Shopify detection error: {e}")
+                scraped_content['is_shopify'] = False
+                return scraped_content
             
             # STEP 3: SCRAPE ALL PAGES - let AI decide what's useful
             scraped_count = 0

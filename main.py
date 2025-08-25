@@ -1,6 +1,7 @@
 from fastapi import FastAPI, HTTPException, BackgroundTasks, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, HttpUrl
 from typing import Optional, List
 from urllib.parse import urlparse
@@ -20,6 +21,10 @@ app = FastAPI(
     description="AI-powered system for extracting and analyzing shipping and return policies",
     version="1.0.0"
 )
+# Serve frontend if present (for hosted environments)
+if os.path.isdir("frontend"):
+    app.mount("/app", StaticFiles(directory="frontend", html=True), name="app")
+
 
 # CORS configuration - Allow all origins for production API
 cors_origins = os.getenv("CORS_ORIGINS", "*").split(",")
@@ -193,41 +198,71 @@ async def get_result(result_id: int):
     }
 
 @app.get("/export/csv")
-async def export_csv():
-    """Export all results as CSV"""
-    import pandas as pd
+async def export_csv(sep: str | None = None, bom: bool = False):
+    """Export all results as CSV.
+
+    Query params:
+    - sep: ',', ';', 'tab' or single-char. Defaults to ';' for better Excel compatibility.
+    - bom: true/false. If true, writes UTF-8 BOM (Excel-friendly).
+    """
     import io
+    import csv
     from fastapi.responses import StreamingResponse
-    
+
     db = next(get_db())
     results = db.query(AnalysisResult).all()
-    
-    # Format data according to the required CSV structure
-    csv_data = []
-    for result in results:
-        csv_data.append({
-            "domain": result.domain,
-            "shipping_policy_and_cost": f"{result.shipping_policy}{result.shipping_url}",
-            "return_policy_and_cost": f"{result.return_policy}{result.return_url}",
-            "self_help_returns": f"{result.self_help_returns}{result.self_help_url}",
-            "insurance": f"{result.insurance}{result.insurance_url}",
-            "": "",
-            " ": "",
-            "  ": "",
-            "   ": "",
-            "    ": "",
-            "     ": ""
-        })
-    
-    df = pd.DataFrame(csv_data)
-    
-    # Create CSV string
+
+    # Build rows
+    headers = [
+        "domain",
+        "shipping_policy",
+        "shipping_url",
+        "return_policy",
+        "return_url",
+        "self_help_returns",
+        "self_help_url",
+        "insurance",
+        "insurance_url",
+        "analyzed_at",
+    ]
+
+    # Determine delimiter
+    def resolve_delimiter(val: str | None) -> str:
+        if not val:
+            return ';'
+        v = val.lower()
+        if v in {',', 'comma'}:
+            return ','
+        if v in {';', 'semicolon', 'semi'}:
+            return ';'
+        if v in {'tab', '\t'}:
+            return '\t'
+        # If single char provided, use it; else fallback to ';'
+        return v[0] if len(v) == 1 else ';'
+
+    delimiter = resolve_delimiter(sep)
+
     output = io.StringIO()
-    df.to_csv(output, index=False)
+    writer = csv.writer(output, delimiter=delimiter, quoting=csv.QUOTE_MINIMAL, lineterminator='\n')
+    writer.writerow(headers)
+    for r in results:
+        writer.writerow([
+            r.domain,
+            (r.shipping_policy or "").replace("\n", " "),
+            r.shipping_url or "",
+            (r.return_policy or "").replace("\n", " "),
+            r.return_url or "",
+            (r.self_help_returns or "").replace("\n", " "),
+            r.self_help_url or "",
+            (r.insurance or "").replace("\n", " "),
+            r.insurance_url or "",
+            r.analyzed_at,
+        ])
+
     output.seek(0)
-    
+    data_bytes = output.getvalue().encode('utf-8-sig' if bom else 'utf-8')
     return StreamingResponse(
-        io.BytesIO(output.getvalue().encode()),
+        io.BytesIO(data_bytes),
         media_type="text/csv",
         headers={"Content-Disposition": "attachment; filename=ecommerce_policies.csv"}
     )

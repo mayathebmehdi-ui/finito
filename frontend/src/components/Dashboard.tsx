@@ -64,12 +64,30 @@ export const Dashboard: React.FC = () => {
     }
   }
 
+  // Normalize a domain or URL input to a root URL (https://<domain>)
+  const normalizeToRootUrl = (input: string): string => {
+    let value = input.trim()
+    if (!value) return value
+    // If protocol is missing, prepend https://
+    if (!/^https?:\/\//i.test(value)) {
+      value = `https://${value}`
+    }
+    try {
+      const u = new URL(value)
+      return `${u.protocol}//${u.hostname}`
+    } catch {
+      // Fallback simple normalization
+      const cleaned = value.replace(/^https?:\/\//i, '').split('/')[0]
+      return `https://${cleaned}`
+    }
+  }
+
   const handleAnalyze = async () => {
     if (!url.trim()) return
-    
     try {
       setAnalyzing(true)
-      const response = await apiService.analyzeWebsite(url)
+      const normalized = normalizeToRootUrl(url)
+      const response = await apiService.analyzeWebsite(normalized)
       setJobId(response.job_id)
       setJobStatus('pending')
       setUrl('')
@@ -187,7 +205,7 @@ export const Dashboard: React.FC = () => {
               <span className="bg-gradient-to-r from-blue-600 to-indigo-600 bg-clip-text text-transparent"> real-time</span>
             </h2>
             <p className="text-xl text-gray-600 mb-8">
-              Enter a URL and our AI automatically extracts all shipping, returns and insurance information
+              Enter a domain (e.g., walmart.com). We normalize to https://&lt;domain&gt; and extract shipping, returns and insurance information.
             </p>
           </div>
 
@@ -200,8 +218,8 @@ export const Dashboard: React.FC = () => {
           >
             <div className="flex space-x-4">
               <Input
-                type="url"
-                placeholder="https://example.com"
+                type="text"
+                placeholder="walmart.com"
                 value={url}
                 onChange={(e) => setUrl(e.target.value)}
                 className="flex-1 h-12 text-lg"

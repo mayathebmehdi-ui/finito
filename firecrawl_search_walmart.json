@@ -1,0 +1,86 @@
+{
+  "shipping_policy": {
+    "query": "shipping policy walmart.com",
+    "web": [
+      {
+        "url": "https://marketplacelearn.walmart.com/guides/Policies%20&%20standards/Shipping%20&%20fulfillment/Shipping-and-fulfillment-policy",
+        "title": "Shipping & fulfillment policy - Guides | Marketplace Learn",
+        "description": "Walmart Marketplace requires sellers to ship orders within two operational days after receiving an o"
+      },
+      {
+        "url": "https://marketplace.walmart.com/wp-content/uploads/2019/05/walmart-marketplace-quickstart-seller-settings-shipping-options.pdf",
+        "title": "Need help with Shipping Options?",
+        "description": "To set up shipping, select a shipping model, configure shipping methods, set transit times, and conf"
+      },
+      {
+        "url": "https://marketplace.walmart.com/shipping-and-fulfillment/",
+        "title": "Shipping & Fulfillment",
+        "description": "Walmart offers seller-fulfilled solutions, fast delivery programs, discounted shipping labels, and f"
+      }
+    ],
+    "count": 3
+  },
+  "return_policy": {
+    "query": "return policy walmart.com",
+    "web": [
+      {
+        "url": "https://www.walmart.com/help/article/walmart-standard-return-policy/adc0dfb692954e67a4de206fb8d9e03a",
+        "title": "Walmart Standard Return Policy",
+        "description": "You have 90 days after purchase or upon receipt to return most items unless noted in our exceptions."
+      },
+      {
+        "url": "https://www.walmart.com/cp/returns/1231920",
+        "title": "Free Returns | Walmart.com",
+        "description": "In most cases, you have 90 days to return items purchased from Walmart. Return window exceptions mig"
+      },
+      {
+        "url": "https://www.walmart.com/help/channel/returns-and-refunds/5a33a1f61af8479e9d1bd8b727e9e761",
+        "title": "Returns & Refunds - Walmart.com",
+        "description": "Refunds · Start an Online Return · Duty and Import Related Fees · Walmart Standard Return Policy · W"
+      }
+    ],
+    "count": 3
+  },
+  "self_help_returns": {
+    "query": "self service returns walmart.com",
+    "web": [
+      {
+        "url": "https://www.walmart.com/cp/returns/1231920",
+        "title": "Free Returns | Walmart.com",
+        "description": "In most cases, you have 90 days to return items purchased from Walmart. Return window exceptions mig"
+      },
+      {
+        "url": "https://www.walmart.com/help/article/start-an-online-return/a760300a0bfb4cd4891e43f092c8bd18",
+        "title": "Start an Online Return - Walmart.com",
+        "description": "When you start a return, you'll receive an email with your return label. You can print your label di"
+      },
+      {
+        "url": "https://www.walmart.com/help/channel/returns-and-refunds/5a33a1f61af8479e9d1bd8b727e9e761",
+        "title": "Returns & Refunds - Walmart.com",
+        "description": "Track your order, edit or cancel an order, returns & refunds. Search help topics. Help Topics: Your "
+      }
+    ],
+    "count": 3
+  },
+  "insurance": {
+    "query": "protection plan warranty walmart.com",
+    "web": [
+      {
+        "url": "https://www.walmart.com/help/article/walmart-protection-plans-by-allstate/87e60d4d34b340e0adfe815afe402d19",
+        "title": "Walmart Protection Plans by Allstate",
+        "description": "The protection plan covers: · Accidents; Damage to the item ; The Standard Plan covers: Mechanical a"
+      },
+      {
+        "url": "https://www.walmart.com/cp/product-care-plan/6993429",
+        "title": "Product Care Plan - Walmart.com",
+        "description": "Register plan & file a claim easily. For the fastest service, file a claim online at walmartprotecti"
+      },
+      {
+        "url": "https://www.squaretrade.com/walmart",
+        "title": "Walmart Landing Page - Allstate Protection Plans",
+        "description": "We'll repair your item. If we can't repair it, we'll send you a replacement or reimburse you for one"
+      }
+    ],
+    "count": 3
+  }
+}

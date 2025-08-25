@@ -27,6 +27,27 @@ class PolicyAnalyzer:
     async def analyze_policies(self, scraped_data: Dict) -> Dict[str, str]:
         """Analyze scraped content and extract structured policy information"""
         
+        # If non-Shopify, skip AI pre-analysis and use Firecrawl directly
+        if scraped_data.get('is_shopify') is False and self.firecrawl_fallback and scraped_data.get('domain'):
+            base_result = {
+                'domain': scraped_data.get('domain', 'Unknown'),
+                'shipping_policy': 'Information not available',
+                'shipping_url': scraped_data.get('main_url', ''),
+                'return_policy': 'Information not available',
+                'return_url': scraped_data.get('main_url', ''),
+                'self_help_returns': 'Information not available',
+                'self_help_url': scraped_data.get('main_url', ''),
+                'insurance': 'Information not available',
+                'insurance_url': scraped_data.get('main_url', '')
+            }
+            try:
+                logger.info(f"🔥 ANALYZER: Non-Shopify detected → Direct Firecrawl for {scraped_data['domain']}")
+                enhanced = self.firecrawl_fallback.enhance_analysis(base_result, scraped_data['domain'])
+                return enhanced
+            except Exception as e:
+                logger.error(f"❌ ANALYZER: Direct Firecrawl failed: {e}")
+                return base_result
+
         # Prepare content for analysis
         content_text = self._prepare_content(scraped_data)
         

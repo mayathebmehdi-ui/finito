@@ -18,9 +18,11 @@ logger = logging.getLogger(__name__)
 
 class FirecrawlFallback:
     def __init__(self):
-        # Initialisation de Firecrawl avec la clé API
-        self.firecrawl_api_key = "fc-c8abcd00ce2c462daba5b66aed5b20d1"
-        self.firecrawl = Firecrawl(api_key=self.firecrawl_api_key)
+        # Initialisation de Firecrawl avec la clé API depuis l'environnement
+        firecrawl_key = os.getenv("FIRECRAWL_API_KEY")
+        if not firecrawl_key:
+            raise ValueError("❌ FIRECRAWL_API_KEY non trouvée dans les variables d'environnement (.env)")
+        self.firecrawl = Firecrawl(api_key=firecrawl_key)
         
         # Configuration OpenAI avec vérification
         openai_key = os.getenv("OPENAI_API_KEY")
@@ -28,7 +30,16 @@ class FirecrawlFallback:
             raise ValueError("❌ OPENAI_API_KEY non trouvée dans les variables d'environnement")
         
         self.openai_client = openai.OpenAI(api_key=openai_key)
-        logger.info("✅ Firecrawl Fallback initialisé avec clés API valides")
+        
+        # SEARCH-ONLY toggle: if true, do not scrape URLs; pass titles+descriptions to OpenAI
+        self.search_only = str(os.getenv("FIRECRAWL_SEARCH_ONLY", "false")).strip().lower() in ("1", "true", "yes", "on")
+        try:
+            self.search_only_topk = int(os.getenv("FIRECRAWL_SEARCH_ONLY_TOPK", "5"))
+        except Exception:
+            self.search_only_topk = 5
+        if self.search_only:
+            logger.info(f"🛠️ FIRECRAWL: SEARCH_ONLY mode enabled (topK={self.search_only_topk})")
+        logger.info("✅ Firecrawl Fallback initialisé avec clés API valides (OpenAI + Firecrawl)")
 
     def is_information_missing(self, analysis_result: Dict) -> Dict[str, bool]:
         """
@@ -129,11 +140,11 @@ class FirecrawlFallback:
             logger.info(f"🆘 FIRECRAWL: Fallback decision (≥2 missing): {'YES' if fallback_decision else 'NO'}")
             return fallback_decision
 
-    def search_missing_information(self, domain: str, missing_info: Dict[str, bool]) -> Dict[str, str]:
+    def search_missing_information(self, domain: str, missing_info: Dict[str, bool]) -> Dict[str, Dict[str, Optional[str]]]:
         """
         Utilise Firecrawl pour rechercher les informations manquantes
         """
-        results = {}
+        results: Dict[str, Dict[str, Optional[str]]] = {}
         
         # Construire les requêtes de recherche spécifiques
         # Nettoyer le domaine pour optimiser la recherche Firecrawl
@@ -146,6 +157,18 @@ class FirecrawlFallback:
             "insurance": f"protection plan warranty {clean_domain}"
         }
         
+        # Keywords to score the most relevant search item per field
+        field_keywords = {
+            "shipping_policy": ["shipping", "delivery", "ship", "shipping policy", "delivery options"],
+            "return_policy": ["return", "refund", "exchange", "return policy", "returns"],
+            "self_help_returns": [
+                "start a return", "start an online return", "returns portal",
+                "self-service", "guest help", "online return", "return label",
+                "return barcode", "drive up returns", "self service"
+            ],
+            "insurance": ["protection plan", "warranty", "insurance", "allstate", "squaretrade"]
+        }
+
         for field, is_missing in missing_info.items():
             if not is_missing:
                 continue
@@ -153,68 +176,154 @@ class FirecrawlFallback:
             try:
                 logger.info(f"🔥 FIRECRAWL: Searching for {field} with query: {search_queries[field][:50]}...")
                 
-                # Recherche avec Firecrawl V2 API et scraping du contenu
-                search_result = self.firecrawl.search(
-                    query=search_queries[field],
-                    limit=2  # Réduire à 2 pour avoir un contenu plus riche
-                )
+                # Recherche avec Firecrawl (SEARCH UNIQUEMENT)
+                try:
+                    search_result = self.firecrawl.search(
+                        query=search_queries[field],
+                        limit=3,
+                    )
+                except TypeError:
+                    # Compatibilité: anciennes versions Python SDK sans scrape_options
+                    search_result = self.firecrawl.search(
+                        query=search_queries[field],
+                        limit=3
+                    )
                 logger.info(f"📡 FIRECRAWL: Search completed for {field}")
-                
-                if search_result and hasattr(search_result, 'web') and search_result.web:
-                    # Scraper le contenu complet des URLs trouvées
-                    content_pieces = []
-                    
-                    for result in search_result.web[:2]:  # Prendre les 2 premiers résultats web
-                        if hasattr(result, 'url') and result.url:
+
+                # Normaliser les items (supporte .web, ['web'], ou liste directe)
+                items = []
+                if search_result:
+                    if hasattr(search_result, 'web') and search_result.web:
+                        items = search_result.web
+                    elif isinstance(search_result, dict) and search_result.get('web'):
+                        items = search_result['web']
+                    elif isinstance(search_result, list):
+                        items = search_result
+
+                if items:
+                    # SEARCH_ONLY: sort by relevance and aggregate topK titles/descriptions for OpenAI
+                    if self.search_only:
+                        def score_item_so(it) -> int:
+                            getv = (lambda k: getattr(it, k) if hasattr(it, k) else (it.get(k) if isinstance(it, dict) else None))
+                            title = str(getv('title') or '')
+                            desc = str(getv('description') or '')
+                            url = str(getv('url') or '')
+                            hay = " ".join(filter(None, [title, desc, url])).lower()
+                            score = sum(1 for kw in field_keywords.get(field, []) if kw in hay)
+                            if field == "self_help_returns":
+                                if "start an online return" in hay or "start a return" in hay:
+                                    score += 2
+                                if "help/article" in url or "returns" in url:
+                                    score += 1
+                            if field == "return_policy" and ("return policy" in hay or "returns & refunds" in hay):
+                                score += 1
+                            return score
+
+                        sorted_items_so = sorted(items, key=score_item_so, reverse=True)
+                        top_items: List[str] = []
+                        for idx, it in enumerate(sorted_items_so[: self.search_only_topk], start=1):
+                            getv = (lambda k: getattr(it, k) if hasattr(it, k) else (it.get(k) if isinstance(it, dict) else None))
+                            url = getv('url')
+                            title = getv('title')
+                            desc = getv('description')
+                            top_items.append("\n".join(filter(None, [
+                                f"Candidate {idx}:",
+                                f"Title: {title}" if title else None,
+                                f"Description: {desc}" if desc else None,
+                                f"URL: {url}" if url else None,
+                            ])))
+                        combined = "\n\n".join(top_items)
+                        best_url = (getattr(sorted_items_so[0], 'url', None) if hasattr(sorted_items_so[0], 'url') else (sorted_items_so[0].get('url') if isinstance(sorted_items_so[0], dict) else None))
+                        extracted_info = self._extract_specific_info(combined[:4000], field, domain)
+                        results[field] = {"text": extracted_info or "Information not available", "url": best_url}
+                        logger.info(f"✅ FIRECRAWL: SEARCH_ONLY extracted {field}")
+                        continue
+
+                    # Score and try multiple candidates to avoid picking a bad one (e.g., marketplace pages)
+                    def score_item(it) -> int:
+                        getv = (lambda k: getattr(it, k) if hasattr(it, k) else (it.get(k) if isinstance(it, dict) else None))
+                        title = str(getv('title') or '')
+                        desc = str(getv('description') or '')
+                        url = str(getv('url') or '')
+                        hay = " ".join(filter(None, [title, desc, url])).lower()
+                        score = sum(1 for kw in field_keywords.get(field, []) if kw in hay)
+                        # Heuristics: penalize marketplace/seller pages for consumer policies
+                        if field in ("return_policy", "shipping_policy"):
+                            if "marketplace" in hay or "seller" in hay:
+                                score -= 2
+                            if "help/article" in url or "cp/returns" in url or "return-policy" in url:
+                                score += 2
+                        return score
+
+                    sorted_items = sorted(items, key=score_item, reverse=True)
+                    success = False
+                    chosen_url_for_logging = None
+
+                    for idx, candidate in enumerate(sorted_items[:3], start=1):
+                        getv = (lambda k: getattr(candidate, k) if hasattr(candidate, k) else (candidate.get(k) if isinstance(candidate, dict) else None))
+                        url = getv('url')
+                        markdown = getv('markdown')
+                        title = getv('title')
+                        desc = getv('description')
+                        chosen_url_for_logging = url or chosen_url_for_logging
+                        logger.info(f"🧪 FIRECRAWL: Trying candidate {idx} for {field}: {url}")
+
+                        # Build content: prefer scraped markdown, fallback to title+description
+                        if markdown:
+                            combined_content = str(markdown)[:4000]
+                        elif url:
                             try:
-                                logger.info(f"📄 FIRECRAWL: Scraping content from {result.url[:60]}...")
-                                
-                                # Scraper le contenu complet de l'URL avec Firecrawl
+                                logger.info(f"🔄 FIRECRAWL: Scraping {url} for full content...")
                                 scraped_content = self.firecrawl.scrape(
-                                    url=result.url,
+                                    url=url,
                                     formats=['markdown', 'html']
                                 )
-                                
                                 if scraped_content and hasattr(scraped_content, 'markdown') and scraped_content.markdown:
-                                    # Prendre le contenu markdown complet
-                                    full_content = scraped_content.markdown
-                                    logger.info(f"✅ FIRECRAWL: Scraped {len(full_content)} chars from {result.url[:30]}...")
-                                    content_pieces.append(full_content[:3000])  # Limiter à 3000 chars pour OpenAI
+                                    combined_content = scraped_content.markdown[:4000]
+                                    logger.info(f"✅ FIRECRAWL: Got {len(combined_content)} chars of markdown content")
                                 elif scraped_content and hasattr(scraped_content, 'html') and scraped_content.html:
-                                    # Fallback sur HTML si pas de markdown
-                                    full_content = scraped_content.html
-                                    logger.info(f"✅ FIRECRAWL: Scraped HTML {len(full_content)} chars from {result.url[:30]}...")
-                                    content_pieces.append(full_content[:3000])
+                                    combined_content = scraped_content.html[:4000]
+                                    logger.info(f"✅ FIRECRAWL: Got {len(combined_content)} chars of HTML content")
                                 else:
-                                    # Fallback sur titre + description
-                                    fallback_content = f"Title: {result.title}\nDescription: {result.description}"
-                                    content_pieces.append(fallback_content)
-                                    logger.warning(f"🔄 FIRECRAWL: Using fallback content for {result.url[:30]}...")
-                                    
+                                    parts = []
+                                    if title:
+                                        parts.append(f"Title: {title}")
+                                    if desc:
+                                        parts.append(f"Description: {desc}")
+                                    combined_content = "\n".join(parts)[:1500] if parts else ""
+                                    logger.warning(f"⚠️ FIRECRAWL: No markdown/html from scrape, using title+description")
                             except Exception as scrape_error:
-                                logger.warning(f"⚠️ FIRECRAWL: Scraping failed for {result.url[:30]}: {scrape_error}")
-                                # Fallback sur titre + description en cas d'erreur
-                                fallback_content = f"Title: {result.title}\nDescription: {result.description}"
-                                content_pieces.append(fallback_content)
-                    
-                    if content_pieces:
-                        combined_content = "\n\n".join(content_pieces)
-                        
-                        # Analyser le contenu avec OpenAI
-                        extracted_info = self._extract_specific_info(combined_content, field, domain)
-                        
-                        if extracted_info and extracted_info != "Information not available":
-                            results[field] = extracted_info
-                            logger.info(f"✅ FIRECRAWL: Successfully found {field}: {extracted_info[:100]}...")
+                                logger.warning(f"❌ FIRECRAWL: Scrape failed for {url}: {scrape_error}")
+                                parts = []
+                                if title:
+                                    parts.append(f"Title: {title}")
+                                if desc:
+                                    parts.append(f"Description: {desc}")
+                                combined_content = "\n".join(parts)[:1500] if parts else ""
                         else:
-                            results[field] = "Information not available"
-                            logger.warning(f"🔍 FIRECRAWL: No useful info extracted for {field}")
-                    else:
-                        results[field] = "Information not available"
-                        logger.warning(f"📄 FIRECRAWL: No content found in search results for {field}")
+                            parts = []
+                            if title:
+                                parts.append(f"Title: {title}")
+                            if desc:
+                                parts.append(f"Description: {desc}")
+                            combined_content = "\n".join(parts)[:1500] if parts else ""
+
+                        if combined_content:
+                            extracted_info = self._extract_specific_info(combined_content, field, domain)
+                            if extracted_info and extracted_info != "Information not available":
+                                results[field] = {"text": extracted_info, "url": url}
+                                logger.info(f"✅ FIRECRAWL: Extracted {field} from candidate {idx}")
+                                success = True
+                                break
+                            else:
+                                logger.warning(f"🔍 FIRECRAWL: Candidate {idx} yielded no useful info for {field}")
+
+                    if not success:
+                        results[field] = {"text": "Information not available", "url": chosen_url_for_logging}
+                        logger.warning(f"🚫 FIRECRAWL: All candidates exhausted for {field}")
                 else:
-                    results[field] = "Information not available"
-                    logger.warning(f"🚫 FIRECRAWL: No web results found for {field}")
+                    results[field] = {"text": "Information not available", "url": None}
+                    logger.warning(f"🚫 FIRECRAWL: No search items found for {field}")
                     
             except Exception as e:
                 logger.error(f"❌ FIRECRAWL: Search failed for {field}: {e}")
@@ -293,10 +402,13 @@ class FirecrawlFallback:
                 logger.info("✅ FIRECRAWL: No missing information detected - skipping")
                 return analysis_result
             
-            # 2. Demander à OpenAI si on devrait utiliser Firecrawl
-            if not self.should_use_firecrawl(missing_info, domain):
-                logger.info("🚫 FIRECRAWL: OpenAI advised against using Firecrawl - skipping")
-                return analysis_result
+            # 2. Decision gate: bypass if SEARCH_ONLY is forced
+            if not self.search_only:
+                if not self.should_use_firecrawl(missing_info, domain):
+                    logger.info("🚫 FIRECRAWL: OpenAI advised against using Firecrawl - skipping")
+                    return analysis_result
+            else:
+                logger.info("🔓 FIRECRAWL: SEARCH_ONLY mode - bypassing OpenAI decision gate")
             
             # 3. Utiliser Firecrawl pour rechercher les informations manquantes
             logger.info("🔥 FIRECRAWL: Launching search for missing information")
@@ -305,10 +417,21 @@ class FirecrawlFallback:
             # 4. Mettre à jour l'analyse avec les nouvelles informations
             enhanced_result = analysis_result.copy()
             enhancement_count = 0
-            for field, new_info in firecrawl_results.items():
-                if new_info != "Information not available":
-                    enhanced_result[field] = new_info
-                    enhanced_result[f"{field.replace('_policy', '_url').replace('self_help_returns', 'self_help_url').replace('insurance', 'insurance_url')}"] = f"https://{domain}/ (via Firecrawl search)"
+            for field, payload in firecrawl_results.items():
+                new_text = payload.get("text") if isinstance(payload, dict) else None
+                new_url = payload.get("url") if isinstance(payload, dict) else None
+                if new_text and new_text != "Information not available":
+                    enhanced_result[field] = new_text
+                    # Map field to its URL field
+                    url_field_map = {
+                        "shipping_policy": "shipping_url",
+                        "return_policy": "return_url",
+                        "self_help_returns": "self_help_url",
+                        "insurance": "insurance_url",
+                    }
+                    url_field = url_field_map.get(field)
+                    if url_field and new_url:
+                        enhanced_result[url_field] = new_url
                     enhancement_count += 1
                     logger.info(f"🎯 FIRECRAWL: Enhanced {field} with new information")
             
